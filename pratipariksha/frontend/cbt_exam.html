@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PratiPariksha | CBT Exam Portal</title>
+    <link rel="stylesheet" href="public/css/style.css">
+    <script src="public/js/common.js"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+        header { background: #fff; border-bottom: 2px solid #ddd; padding: 0.5rem 2rem; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .exam-container { flex: 1; display: flex; overflow: hidden; }
+        .left-panel { width: 300px; background: #fff; border-right: 2px solid #ddd; padding: 1rem; overflow-y: auto; }
+        .main-panel { flex: 1; padding: 2rem; overflow-y: auto; background: #fff; position: relative; }
+        footer { background: #fff; border-top: 2px solid #ddd; padding: 1rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        .q-navigator { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; }
+        .q-num { width: 40px; height: 40px; border: 1px solid #ccc; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; font-weight: bold; background: #fff; }
+        .q-num.active { border: 2px solid var(--accent); }
+        .q-num.answered { background: var(--success); color: white; border-color: var(--success); }
+        .q-num.marked { background: var(--warning); color: white; border-color: var(--warning); }
+        .q-num.not-visited { background: #fff; color: #333; }
+        .timer { font-size: 1.5rem; font-weight: bold; color: var(--danger); }
+        #moodbot-popup { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+        #moodbot-popup .card { width: 400px; text-align: center; padding: 2rem; }
+        .loo-break-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); z-index: 1500; display: none; align-items: center; justify-content: center; flex-direction: column; }
+    </style>
+</head>
+<body onload="enterFullscreen()">
+    <div id="moodbot-popup">
+        <div class="card">
+            <h2>Hello! I am Moodbot.</h2>
+            <p>How are you feeling today?</p>
+            <div style="display:flex; justify-content:center; gap:1rem;">
+                <button class="btn btn-success" onclick="selectMood('Good')">Good</button>
+                <button class="btn btn-primary" onclick="selectMood('Okay')">Okay</button>
+                <button class="btn btn-danger" onclick="selectMood('Not Good')">Not Good</button>
+            </div>
+            <p id="moodReply" style="margin-top:1rem; font-weight:bold;"></p>
+            <button id="startExamBtn" class="btn btn-primary" style="display:none; margin-top:1rem;" onclick="closeMoodbot()">Start Exam</button>
+        </div>
+    </div>
+
+    <div id="looBreakOverlay" class="loo-break-overlay">
+        <h1>On Loo Break</h1>
+        <p>Take your time. Click the button below when you return.</p>
+        <button class="btn btn-success" onclick="endLooBreak()">I'm Back</button>
+        <p id="looBreakCount"></p>
+    </div>
+
+    <header>
+        <div class="timer" id="timer">00:00:00</div>
+        <div id="studentNameDisplay" style="font-weight:bold;">Student Name</div>
+        <div style="font-weight:bold;">PratiPariksha | CBT Exam Portal</div>
+    </header>
+
+    <div class="exam-container">
+        <div class="left-panel">
+            <h3>Question Navigator</h3>
+            <div class="q-navigator" id="qNavigator"></div>
+            <hr>
+            <div style="font-size:0.8rem;">
+                <p><span class="q-num answered" style="display:inline-block; width:15px; height:15px;"></span> Answered</p>
+                <p><span class="q-num marked" style="display:inline-block; width:15px; height:15px;"></span> Marked for Review</p>
+                <p><span class="q-num not-visited" style="display:inline-block; width:15px; height:15px;"></span> Not Visited</p>
+            </div>
+        </div>
+        <div class="main-panel">
+            <h2 id="qTitle">Question 1</h2>
+            <div id="qContent" style="font-size:1.2rem; margin-bottom:2rem;">Loading question...</div>
+            <div id="optionsList" style="margin-bottom:2rem;"></div>
+        </div>
+    </div>
+
+    <footer>
+        <div>
+            <button class="btn" onclick="prevQuestion()">Previous</button>
+            <button class="btn btn-primary" onclick="nextQuestion()">Next</button>
+            <button class="btn btn-warning" onclick="markForReview()">Mark for Review</button>
+        </div>
+        <div>
+            <button class="btn btn-danger" onclick="startLooBreak()">Loo Break</button>
+            <button class="btn" id="delayBtn" onclick="delaySubmission()">Delay Submission by 30 mins</button>
+            <button class="btn btn-success" onclick="submitExam()">Submit Exam</button>
+        </div>
+    </footer>
+
+    <script>
+        checkRole('student');
+        let questions = [];
+        let currentIndex = 0;
+        let responses = {};
+        let marked = {};
+        let timerSeconds = 3600; // 60 minutes
+        let timerInterval = null;
+        let delayUsed = false;
+
+        document.getElementById('studentNameDisplay').innerText = localStorage.getItem('username');
+
+        async function enterFullscreen() {
+            try {
+                if (document.documentElement.requestFullscreen) {
+                    await document.documentElement.requestFullscreen();
+                }
+            } catch (e) { console.log(e); }
+        }
+
+        async function selectMood(mood) {
+            await fetchAPI('/exam/mood', { method: 'POST', body: JSON.stringify({ mood }) });
+            const reply = document.getElementById('moodReply');
+            if (mood === 'Not Good') {
+                reply.innerText = "Consider taking a short break before starting.";
+                reply.style.color = 'var(--danger)';
+            } else {
+                reply.innerText = "That's great! Good luck with your exam.";
+                reply.style.color = 'var(--success)';
+            }
+            document.getElementById('startExamBtn').style.display = 'block';
+        }
+
+        function closeMoodbot() {
+            document.getElementById('moodbot-popup').style.display = 'none';
+            loadQuestions();
+            startTimer();
+        }
+
+        async function loadQuestions() {
+            const res = await fetchAPI('/exam/questions');
+            questions = await res.json();
+            if (res.status === 403) {
+                alert('Exam not accessible.');
+                window.location.href = 'student_portal.html';
+                return;
+            }
+            renderNavigator();
+            showQuestion(0);
+        }
+
+        function renderNavigator() {
+            const nav = document.getElementById('qNavigator');
+            nav.innerHTML = '';
+            for (let i = 0; i < 20; i++) {
+                const q = questions[i];
+                let status = 'not-visited';
+                if (responses[i]) status = 'answered';
+                if (marked[i]) status = 'marked';
+                
+                nav.innerHTML += `<div class="q-num ${status} ${i === currentIndex ? 'active' : ''}" onclick="showQuestion(${i})">${i + 1}</div>`;
+            }
+        }
+
+        function showQuestion(index) {
+            currentIndex = index;
+            renderNavigator();
+            const q = questions[currentIndex] || { question: "No question available", options: [], type: 'MCQ' };
+            document.getElementById('qTitle').innerText = `Question ${currentIndex + 1}`;
+            document.getElementById('qContent').innerText = q.question;
+            
+            const opts = document.getElementById('optionsList');
+            opts.innerHTML = '';
+            
+            if (q.type === 'MCQ' || q.type === 'MSQ') {
+                q.options.forEach((opt, idx) => {
+                    const checked = (responses[currentIndex] || '').split(',').includes(opt);
+                    opts.innerHTML += `<div>
+                        <input type="${q.type === 'MCQ' ? 'radio' : 'checkbox'}" name="qOpt" value="${opt}" ${checked ? 'checked' : ''} onchange="saveResponse()">
+                        <label>${opt}</label>
+                    </div>`;
+                });
+            } else if (q.type === 'NAT') {
+                opts.innerHTML = `<input type="text" id="natAns" value="${responses[currentIndex] || ''}" oninput="saveResponse()" placeholder="Enter numerical answer">`;
+            }
+        }
+
+        function saveResponse() {
+            const q = questions[currentIndex];
+            if (q.type === 'MCQ') {
+                const selected = document.querySelector('input[name="qOpt"]:checked');
+                if (selected) responses[currentIndex] = selected.value;
+            } else if (q.type === 'MSQ') {
+                const selected = Array.from(document.querySelectorAll('input[name="qOpt"]:checked')).map(i => i.value);
+                responses[currentIndex] = selected.join(',');
+            } else if (q.type === 'NAT') {
+                responses[currentIndex] = document.getElementById('natAns').value;
+            }
+            renderNavigator();
+        }
+
+        function nextQuestion() {
+            if (currentIndex < questions.length - 1) showQuestion(currentIndex + 1);
+        }
+
+        function prevQuestion() {
+            if (currentIndex > 0) showQuestion(currentIndex - 1);
+        }
+
+        function markForReview() {
+            marked[currentIndex] = !marked[currentIndex];
+            renderNavigator();
+        }
+
+        function startTimer() {
+            timerInterval = setInterval(() => {
+                timerSeconds--;
+                if (timerSeconds <= 0) {
+                    clearInterval(timerInterval);
+                    submitExam();
+                }
+                const h = Math.floor(timerSeconds / 3600);
+                const m = Math.floor((timerSeconds % 3600) / 60);
+                const s = timerSeconds % 60;
+                document.getElementById('timer').innerText = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+            }, 1000);
+        }
+
+        async function startLooBreak() {
+            const res = await fetchAPI('/exam/loo-break/start', { method: 'POST' });
+            const data = await res.json();
+            document.getElementById('looBreakOverlay').style.display = 'flex';
+            document.getElementById('looBreakCount').innerText = `Currently ${data.current_on_break} students on loo break`;
+        }
+
+        async function endLooBreak() {
+            await fetchAPI('/exam/loo-break/end', { method: 'POST' });
+            document.getElementById('looBreakOverlay').style.display = 'none';
+        }
+
+        function delaySubmission() {
+            if (!delayUsed) {
+                timerSeconds += 1800; // 30 mins
+                delayUsed = true;
+                document.getElementById('delayBtn').disabled = true;
+                alert('Submission delayed by 30 minutes.');
+            }
+        }
+
+        async function submitExam() {
+            if (!confirm('Are you sure you want to submit the exam?')) return;
+            const payload = Object.keys(responses).map(idx => ({
+                question_id: questions[idx].id,
+                answer: responses[idx]
+            }));
+            await fetchAPI('/exam/submit', { method: 'POST', body: JSON.stringify(payload) });
+            alert('Exam submitted successfully!');
+            document.exitFullscreen().catch(e => {});
+            window.location.href = 'student_portal.html';
+        }
+
+        // Prevent back navigation
+        window.history.pushState(null, null, window.location.href);
+        window.onpopstate = function () {
+            window.history.go(1);
+        };
+    </script>
+</body>
+</html>
